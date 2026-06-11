@@ -1,0 +1,60 @@
+sp_actualizar_stock_body:BEGIN
+    DECLARE v_stock_anterior INT;
+    DECLARE v_error_msg VARCHAR(255);
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        SELECT 'ERROR: No se pudo actualizar el stock. ROLLBACK ejecutado.' AS resultado;
+    END;
+
+    START TRANSACTION;
+
+    
+    IF NOT EXISTS (SELECT 1 FROM PRODUCTO WHERE Cod_producto = p_cod_producto) THEN
+        SET v_error_msg = 'El producto no existe.';
+        SELECT v_error_msg AS resultado;
+        ROLLBACK;
+        LEAVE sp_actualizar_stock_body;
+    END IF;
+
+    
+    IF NOT EXISTS (SELECT 1 FROM ZONA WHERE cod_zona = p_cod_zona) THEN
+        SET v_error_msg = 'La zona no existe.';
+        SELECT v_error_msg AS resultado;
+        ROLLBACK;
+        LEAVE sp_actualizar_stock_body;
+    END IF;
+
+    
+    IF p_nuevo_stock < 0 THEN
+        SET v_error_msg = 'El stock no puede ser negativo.';
+        SELECT v_error_msg AS resultado;
+        ROLLBACK;
+        LEAVE sp_actualizar_stock_body;
+    END IF;
+
+    
+    SELECT COALESCE(MAX(stock), 0) INTO v_stock_anterior
+    FROM UBICA
+    WHERE Cod_producto = p_cod_producto AND cod_zona = p_cod_zona;
+
+    
+    INSERT INTO UBICA (Cod_producto, cod_zona, stock)
+    VALUES (p_cod_producto, p_cod_zona, p_nuevo_stock)
+    ON DUPLICATE KEY UPDATE stock = p_nuevo_stock;
+
+    
+    INSERT INTO HISTORICO_STOCK (
+        Cod_producto, cod_zona, stock_anterior, stock_nuevo,
+        tipo_movimiento, motivo, usuario_db
+    )
+    VALUES (
+        p_cod_producto, p_cod_zona, v_stock_anterior, p_nuevo_stock,
+        CASE WHEN p_nuevo_stock > v_stock_anterior THEN 'ENTRADA' ELSE 'SALIDA' END,
+        COALESCE(p_motivo, 'Actualizaci??n manual'), CURRENT_USER()
+    );
+
+    COMMIT;
+    SELECT CONCAT('Stock actualizado: ', p_cod_producto, ' en zona ', p_cod_zona,
+                  ' (', v_stock_anterior, ' ??? ', p_nuevo_stock, ')') AS resultado;
+ENDf
