@@ -57,4 +57,4 @@ sp_actualizar_stock_body:BEGIN
     COMMIT;
     SELECT CONCAT('Stock actualizado: ', p_cod_producto, ' en zona ', p_cod_zona,
                   ' (', v_stock_anterior, ' ??? ', p_nuevo_stock, ')') AS resultado;
-ENDf
+END
