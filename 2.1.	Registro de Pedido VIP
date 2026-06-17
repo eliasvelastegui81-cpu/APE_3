@@ -1,0 +1,72 @@
+DELIMITER $$
+CREATE PROCEDURE sp_RegistrarPedidoVIP(
+    IN p_ci_vip CHAR(10),
+    IN p_cedula_empleado CHAR(10),
+    IN p_cod_vivero VARCHAR(50),
+    IN p_cod_producto VARCHAR(50),
+    IN p_cantidad INT,
+    IN p_valor_envio DECIMAL(10,2),
+    IN p_descuento DECIMAL(10,2)
+)
+BEGIN
+    DECLARE v_numero_pedido VARCHAR(50);
+    DECLARE v_stock_disponible INT DEFAULT 0;
+    DECLARE v_existe_vip INT DEFAULT 0;
+    DECLARE v_existe_empleado INT DEFAULT 0;
+    DECLARE v_existe_vivero INT DEFAULT 0;
+
+    -- Manejo de Errores y Auditoría (Caso A: ROLLBACK ante cualquier fallo)
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL SET MESSAGE_TEXT = 'Error al registrar el pedido VIP. La transacción fue revertida.';
+    END;
+
+    START TRANSACTION;
+    
+    -- 1. Validaciones
+    SELECT COUNT(*) INTO v_existe_vip FROM CUENTA_VIP WHERE cedulacli = p_ci_vip;
+    IF v_existe_vip = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El cliente VIP no existe.';
+    END IF;
+
+    SELECT COUNT(*) INTO v_existe_empleado FROM EMPLEADOS WHERE cedula_PK = p_cedula_empleado;
+    IF v_existe_empleado = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El empleado no existe o no está activo.';
+    END IF;
+
+    SELECT COUNT(*) INTO v_existe_vivero FROM VIVERO WHERE cod_vivero = p_cod_vivero;
+    IF v_existe_vivero = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El vivero no existe.';
+    END IF;
+
+    -- Validar existencia de stock en el vivero (sumando todas sus zonas)
+    SELECT COALESCE(SUM(u.stock), 0) INTO v_stock_disponible
+    FROM UBICA u
+    INNER JOIN ZONA z ON u.cod_zona = z.cod_zona
+    WHERE u.Cod_producto = p_cod_producto AND z.cod_vivero = p_cod_vivero;
+    
+    IF v_stock_disponible < p_cantidad THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Stock insuficiente en el vivero para la cantidad solicitada.';
+    END IF;
+
+    -- 2. Crear pedido
+    SET v_numero_pedido = CONCAT('PED-VIP-', DATE_FORMAT(NOW(), '%Y%m%d'), '-', LPAD(FLOOR(RAND() * 1000), 3, '0'));
+
+    INSERT INTO PEDIDO (Numero_pedido, Valor_envio, descuento, Fecha, cedula_empleado, ci_vip, cod_vivero)
+    VALUES (v_numero_pedido, p_valor_envio, p_descuento, CURDATE(), p_cedula_empleado, p_ci_vip, p_cod_vivero);
+
+    -- 3. Registrar detalle y Actualizar stock
+    -- NOTA: Al insertar en INCLUYE, se dispara automáticamente 'trg_incluye_descontar_stock_historico',
+    -- el cual descuenta el stock de la zona correspondiente y registra el movimiento en HISTORICO_STOCK.
+    -- Si el trigger falla (ej. stock insuficiente en la zona específica), el EXIT HANDLER capturará
+    -- el error y ejecutará el ROLLBACK de toda la transacción (incluyendo la creación del pedido).
+    INSERT INTO INCLUYE (Numero_pedido, Cod_producto, Cantidad)
+    VALUES (v_numero_pedido, p_cod_producto, p_cantidad);
+
+    -- 4. Registrar descuento: Ya se persistió en la tabla PEDIDO en el paso 2.
+
+    COMMIT;
+END$$
+DELIMITER ;
+
