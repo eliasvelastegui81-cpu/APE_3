@@ -1,0 +1,43 @@
+DELIMITER $$
+CREATE PROCEDURE sp_TrasladoEmpleado(
+    IN p_cedula_empleado CHAR(10),
+    IN p_cod_zona_destino VARCHAR(50),
+    IN p_fecha_inicio DATE
+)
+BEGIN
+    DECLARE v_cod_vivero_destino VARCHAR(50);
+    DECLARE v_existe_empleado INT DEFAULT 0;
+
+    -- Manejo de Errores (Caso C: ROLLBACK)
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL SET MESSAGE_TEXT = 'Error en el traslado del empleado. Transacción revertida.';
+    END;
+
+    START TRANSACTION;
+
+    -- Validar existencia del empleado
+    SELECT COUNT(*) INTO v_existe_empleado FROM EMPLEADOS WHERE cedula_PK = p_cedula_empleado;
+    IF v_existe_empleado = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El empleado no existe.';
+    END IF;
+
+    -- Validar existencia de la zona destino y obtener su vivero asociado
+    SELECT cod_vivero INTO v_cod_vivero_destino FROM ZONA WHERE cod_zona = p_cod_zona_destino;
+    IF v_cod_vivero_destino IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La zona de destino no existe.';
+    END IF;
+
+    -- 1. Finalizar asignación actual (Cerrar periodo)
+    UPDATE ASIGNADO
+    SET fecha_f = CURDATE()
+    WHERE cedula_PK = p_cedula_empleado AND fecha_f IS NULL;
+
+    -- 2. Crear nueva asignación (Abrir periodo)
+    INSERT INTO ASIGNADO (cedula_PK, cod_zona, fecha_i, fecha_f)
+    VALUES (p_cedula_empleado, p_cod_zona_destino, p_fecha_inicio, NULL);
+
+    COMMIT;
+END$$
+DELIMITER ;
