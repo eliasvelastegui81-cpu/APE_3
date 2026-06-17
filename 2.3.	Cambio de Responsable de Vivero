@@ -1,0 +1,43 @@
+DELIMITER $$
+CREATE PROCEDURE sp_CambioResponsableVivero(
+    IN p_cedula_empleado_nuevo CHAR(10),
+    IN p_cod_vivero VARCHAR(50),
+    IN p_fecha_inicio DATE
+)
+BEGIN
+    DECLARE v_existe_empleado INT DEFAULT 0;
+    DECLARE v_existe_vivero INT DEFAULT 0;
+
+    -- Manejo de Errores (Caso B: ROLLBACK)
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL SET MESSAGE_TEXT = 'Error al cambiar el responsable del vivero. Transacción revertida.';
+    END;
+
+    START TRANSACTION;
+
+    -- Validar existencia del nuevo empleado
+    SELECT COUNT(*) INTO v_existe_empleado FROM EMPLEADOS WHERE cedula_PK = p_cedula_empleado_nuevo;
+    IF v_existe_empleado = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El nuevo empleado responsable no existe.';
+    END IF;
+
+    -- Validar existencia del vivero
+    SELECT COUNT(*) INTO v_existe_vivero FROM VIVERO WHERE cod_vivero = p_cod_vivero;
+    IF v_existe_vivero = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El vivero no existe.';
+    END IF;
+
+    -- 1. Cerrar periodo del responsable anterior
+    UPDATE ENCARGADO
+    SET fecha_f = CURDATE()
+    WHERE cod_vivero = p_cod_vivero AND fecha_f IS NULL;
+
+    -- 2. Abrir periodo del nuevo responsable (Registrar histórico)
+    INSERT INTO ENCARGADO (cedula_PK, cod_vivero, fecha_i, fecha_f)
+    VALUES (p_cedula_empleado_nuevo, p_cod_vivero, p_fecha_inicio, NULL);
+
+    COMMIT;
+END$$
+DELIMITER ;
